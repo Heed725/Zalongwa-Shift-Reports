@@ -1195,11 +1195,11 @@ device_ip = site_cfg["device_ip"]
 username = site_cfg["username"]
 password = site_cfg["password"]
 
-header_logo, header_text = st.columns([1, 5])
+header_logo, header_text = st.columns([1.3, 4.7])
 with header_logo:
     logo_path = get_logo_path()
     if logo_path:
-        st.image(logo_path, width=220)
+        st.image(logo_path, width="stretch")
 with header_text:
     st.markdown(f"# {site_cfg['label']} Shift Reports")
     st.markdown(
