@@ -1,0 +1,8 @@
+streamlit
+requests
+urllib3
+pandas
+python-docx
+reportlab
+openpyxl
+Pillow
