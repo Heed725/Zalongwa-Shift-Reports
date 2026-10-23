@@ -264,10 +264,10 @@ SITES = {
                     "Aziza Msangi",
                     "Atu Kalemba",
                     "Hemed Lungo",
-                    "Leah Onesmo",
+                    "Amali Murokozi Abbakari",
                     "Rehema Omary",
                     "Rehema Chingwele",
-                    "Lydia",
+                    "Lydia Mutembei",
                     "Saumu Nuru Ngoma",
                     "Mustapha Ramadhani",
                     "Elsa Shelukindo",
@@ -276,10 +276,10 @@ SITES = {
                     "Aziza Msangi": "8009",
                     "Atu Kalemba": "8008",
                     "Hemed Lungo": "8000",
-                    "Leah Onesmo": "8004",
+                    "Amali Murokozi Abbakari": "1003",
                     "Rehema Omary": "8005",
                     "Rehema Chingwele": "8003",
-                    "Lydia": "8001",
+                    "Lydia Mutembei": "8001",
                     "Saumu Nuru Ngoma": "8181",
                     "Mustapha Ramadhani": "8091",
                     "Elsa Shelukindo": "8090",
@@ -509,6 +509,13 @@ def parse_by_day(events, report_start=None, report_end=None):
         scans = sorted(set(scans))
         employee_name = employee_names[employee_id]
         department_key = get_dept(employee_name, employee_id)
+        if department_key is None:
+            continue
+        # Use roster spelling even when the device sends old or uppercase names.
+        for configured_name, configured_id in ALL_EMPLOYEES[department_key].get("member_ids", {}).items():
+            if str(configured_id).strip() == employee_id:
+                employee_name = configured_name
+                break
         index = 0
 
         while index < len(scans):
