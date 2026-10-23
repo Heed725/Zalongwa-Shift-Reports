@@ -270,7 +270,6 @@ SITES = {
                     "Lydia Mutembei",
                     "Saumu Nuru Ngoma",
                     "Mustapha Ramadhani",
-                    "Elsa Shelukindo",
                 ],
                 "member_ids": {
                     "Aziza Msangi": "8009",
@@ -282,7 +281,6 @@ SITES = {
                     "Lydia Mutembei": "8001",
                     "Saumu Nuru Ngoma": "8181",
                     "Mustapha Ramadhani": "8091",
-                    "Elsa Shelukindo": "8090",
                 },
             },
         },
