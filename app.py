@@ -246,7 +246,7 @@ st.markdown(f"""
 # ── ZALONGWA-ONLY CONFIG ─────────────────────────────────────
 # ══════════════════════════════════════════════════════════════
 # The names and IDs below come from the Zalongwa device screenshot.
-# Change the single `shift` value if the official working hours differ.
+# Set the standard hours in `shift` and individual windows in `employee_checkout_windows`.
 SITES = {
     "Zalongwa": {
         "label": "Zalongwa",
@@ -259,6 +259,9 @@ SITES = {
             "Zalongwa": {
                 "label": "ZALONGWA",
                 "shift": "Shift: 08:00 - 17:00",
+                "employee_checkout_windows": {
+                    "8008": "14:30 - 15:30",
+                },
                 "header_hex": "3C6731",
                 "members": [
                     "Aziza Msangi",
@@ -360,7 +363,7 @@ def get_shift_window(dept_key, check_in_dt):
     return shift_start, shift_end
 
 
-def get_checkout_window(dept_key, allocated_end):
+def get_checkout_window(dept_key, allocated_end, employee_id=None):
     """
     Return the earliest and latest accepted checkout timestamps.
 
@@ -368,7 +371,8 @@ def get_checkout_window(dept_key, allocated_end):
     end and remains valid for the normal grace period.
     """
     department = ALL_EMPLOYEES.get(dept_key, {})
-    window_text = str(department.get("checkout_window", "")).strip()
+    employee_window = department.get("employee_checkout_windows", {}).get(employee_id)
+    window_text = str(employee_window or department.get("checkout_window", "")).strip()
     matches = SHIFT_TIME_PATTERN.findall(window_text)
 
     if not matches:
@@ -474,8 +478,8 @@ def parse_by_day(events, report_start=None, report_end=None):
     """
     Build attendance rows from chronological scans.
 
-    Checkout is accepted within the department's configured checkout window.
-    By default, that window begins at the allocated shift end and continues
+    An employee's checkout window takes precedence over the department window.
+    By default, checkout starts at the allocated shift end and continues
     through the normal grace period. Earlier duplicate scans are ignored.
     """
     employee_scans = defaultdict(list)
@@ -514,6 +518,7 @@ def parse_by_day(events, report_start=None, report_end=None):
             if str(configured_id).strip() == employee_id:
                 employee_name = configured_name
                 break
+        configured_id = get_configured_employee_id(department_key, employee_name)
         index = 0
 
         while index < len(scans):
@@ -522,6 +527,7 @@ def parse_by_day(events, report_start=None, report_end=None):
             checkout_start, checkout_deadline = get_checkout_window(
                 department_key,
                 allocated_end,
+                employee_id=configured_id,
             )
 
             checkout_dt = None
@@ -1347,8 +1353,7 @@ if st.button("View / Generate Reports"):
         current_local = local_now()
         if start_date == end_date == current_local.date():
             st.info(
-                "Today's checkout is shown only when an employee scans at the allocated "
-                "shift ending time or later. Earlier or repeated scans remain blank."
+                "Today's checkout appears after a scan within the employee's checkout window."
             )
 
         st.markdown(
