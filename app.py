@@ -13,6 +13,7 @@ import urllib3
 import io, sys, subprocess, os, re
 from datetime import date, timedelta, datetime, timezone
 from collections import defaultdict
+from itertools import groupby
 
 from docx import Document
 from docx.shared import Pt, RGBColor, Cm
@@ -246,7 +247,7 @@ st.markdown(f"""
 # ── ZALONGWA-ONLY CONFIG ─────────────────────────────────────
 # ══════════════════════════════════════════════════════════════
 # The names and IDs below come from the Zalongwa device screenshot.
-# Set the standard hours in `shift` and individual windows in `employee_checkout_windows`.
+# Individual windows use the last qualifying scan on the same day.
 SITES = {
     "Zalongwa": {
         "label": "Zalongwa",
@@ -260,7 +261,7 @@ SITES = {
                 "label": "ZALONGWA",
                 "shift": "Shift: 08:00 - 17:00",
                 "employee_checkout_windows": {
-                    "8008": "14:30 - 15:30",
+                    "8008": "12:00 - 18:00",
                 },
                 "header_hex": "3C6731",
                 "members": [
@@ -363,12 +364,12 @@ def get_shift_window(dept_key, check_in_dt):
     return shift_start, shift_end
 
 
-def get_checkout_window(dept_key, allocated_end, employee_id=None):
+def get_checkout_window(dept_key, reference_dt, employee_id=None):
     """
-    Return the earliest and latest accepted checkout timestamps.
+    Return the start and end of the checkout window.
 
-    Without a custom checkout window, checkout starts at the configured shift
-    end and remains valid for the normal grace period.
+    Custom windows use the reference date. The default starts at the
+    allocated shift end and remains valid for the normal grace period.
     """
     department = ALL_EMPLOYEES.get(dept_key, {})
     employee_window = department.get("employee_checkout_windows", {}).get(employee_id)
@@ -376,15 +377,15 @@ def get_checkout_window(dept_key, allocated_end, employee_id=None):
     matches = SHIFT_TIME_PATTERN.findall(window_text)
 
     if not matches:
-        return allocated_end, allocated_end + timedelta(hours=CHECKOUT_GRACE_HOURS)
+        return reference_dt, reference_dt + timedelta(hours=CHECKOUT_GRACE_HOURS)
 
     start_text, end_text = matches[0]
     start_minute = to_min(start_text)
     end_minute = to_min(end_text)
     if start_minute is None or end_minute is None:
-        return allocated_end, allocated_end + timedelta(hours=CHECKOUT_GRACE_HOURS)
+        return reference_dt, reference_dt + timedelta(hours=CHECKOUT_GRACE_HOURS)
 
-    window_day = allocated_end.replace(hour=0, minute=0, second=0, microsecond=0)
+    window_day = reference_dt.replace(hour=0, minute=0, second=0, microsecond=0)
     checkout_start = window_day + timedelta(minutes=start_minute)
     checkout_end = window_day + timedelta(minutes=end_minute)
 
@@ -474,14 +475,63 @@ def calc_hours(ci,co):
     if m==0 and co=="-": return "-"
     h,mm=divmod(m,60); return f"{h} hrs {mm:02d} min"
 
-def parse_by_day(events, report_start=None, report_end=None):
-    """
-    Build attendance rows from chronological scans.
+def pair_daily_scans(scans, department_key, employee_id):
+    """Pair the first scan with the last eligible checkout on the same date."""
+    for _, day_scans in groupby(scans, key=datetime.date):
+        check_in_dt = next(day_scans)
+        checkout_start, checkout_end = get_checkout_window(
+            department_key, check_in_dt, employee_id=employee_id
+        )
+        checkout_dt = None
+        if check_in_dt < checkout_start:
+            checkout_dt = max(
+                (scan for scan in day_scans if checkout_start <= scan < checkout_end),
+                default=None,
+            )
+        yield check_in_dt, checkout_dt
 
-    An employee's checkout window takes precedence over the department window.
-    By default, checkout starts at the allocated shift end and continues
-    through the normal grace period. Earlier duplicate scans are ignored.
-    """
+
+def pair_shift_scans(scans, department_key):
+    """Pair scans using the department checkout window and shift grace period."""
+    index = 0
+
+    while index < len(scans):
+        check_in_dt = scans[index]
+        _, allocated_end = get_shift_window(department_key, check_in_dt)
+        checkout_start, checkout_deadline = get_checkout_window(department_key, allocated_end)
+
+        checkout_dt = None
+        checkout_index = None
+        next_index = index + 1
+        candidate_index = index + 1
+
+        while candidate_index < len(scans):
+            candidate = scans[candidate_index]
+
+            # Ignore duplicate/extra scans made before checkout is allowed.
+            if candidate < checkout_start:
+                next_index = candidate_index + 1
+                candidate_index += 1
+                continue
+
+            # Accept the first scan inside the configured checkout window.
+            if candidate <= checkout_deadline:
+                checkout_dt = candidate
+                checkout_index = candidate_index
+            break
+
+        yield check_in_dt, checkout_dt
+
+        index = (
+            checkout_index + 1
+            if checkout_index is not None
+            else max(next_index, index + 1)
+        )
+
+
+def parse_by_day(events, report_start=None, report_end=None):
+    """Build report rows from chronological attendance scans."""
+
     employee_scans = defaultdict(list)
     employee_names = {}
 
@@ -519,37 +569,12 @@ def parse_by_day(events, report_start=None, report_end=None):
                 employee_name = configured_name
                 break
         configured_id = get_configured_employee_id(department_key, employee_name)
-        index = 0
+        if configured_id in ALL_EMPLOYEES[department_key].get("employee_checkout_windows", {}):
+            pairs = pair_daily_scans(scans, department_key, configured_id)
+        else:
+            pairs = pair_shift_scans(scans, department_key)
 
-        while index < len(scans):
-            check_in_dt = scans[index]
-            _, allocated_end = get_shift_window(department_key, check_in_dt)
-            checkout_start, checkout_deadline = get_checkout_window(
-                department_key,
-                allocated_end,
-                employee_id=configured_id,
-            )
-
-            checkout_dt = None
-            checkout_index = None
-            next_index = index + 1
-            candidate_index = index + 1
-
-            while candidate_index < len(scans):
-                candidate = scans[candidate_index]
-
-                # Ignore duplicate/extra scans made before checkout is allowed.
-                if candidate < checkout_start:
-                    next_index = candidate_index + 1
-                    candidate_index += 1
-                    continue
-
-                # Accept the first scan inside the configured checkout window.
-                if candidate <= checkout_deadline:
-                    checkout_dt = candidate
-                    checkout_index = candidate_index
-                break
-
+        for check_in_dt, checkout_dt in pairs:
             report_day = check_in_dt.date()
             within_start = report_start is None or report_day >= report_start
             within_end = report_end is None or report_day <= report_end
@@ -566,12 +591,6 @@ def parse_by_day(events, report_start=None, report_end=None):
                     "hours": calc_hours(check_in, check_out),
                     "mins": calc_mins(check_in, check_out),
                 })
-
-            index = (
-                checkout_index + 1
-                if checkout_index is not None
-                else max(next_index, index + 1)
-            )
 
     # Keep only one daily record per employee and prefer a record with checkout.
     consolidated = {}
